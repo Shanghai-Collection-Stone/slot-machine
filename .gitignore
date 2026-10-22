@@ -1,0 +1,8 @@
+# Godot 4
+.godot/
+/android/
+*.tmp
+
+# 本地测试
+/_test/
+__pycache__/
