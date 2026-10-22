@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="SlotSymbol" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/slot_symbol.gd" id="1_0ldd0"]
+[ext_resource type="Texture2D" path="res://assets/symbols/bar.png" id="2_c06pv"]
+
+[resource]
+script = ExtResource("1_0ldd0")
+id = "bar"
+display_name = "BAR"
+texture = ExtResource("2_c06pv")
+tier = 1
+color = Color(1, 0.82, 0.3, 1)
+count = 2
+size_scale = 1.0

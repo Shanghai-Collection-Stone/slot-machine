@@ -19,9 +19,11 @@ const BOUNCE_FREQ := 7.5    ## 回弹频率（Hz）
 const BOUNCE_DAMP := 11.0   ## 回弹衰减
 const SETTLE_TIME := 0.42
 const PUNCH_TIME := 0.5
+const BLUR_LENGTH := 0.28   ## 全速时的拖影长度（以符号高度为 1）
+const BLUR_SHADER := preload("res://shaders/reel_blur.gdshader")
 
 var index := 0
-var strip := PackedStringArray()
+var strip: Array[SlotSymbol] = []
 var rows := 3
 var cell_size := Vector2(300, 210)
 var spin_speed := 16.0
@@ -49,11 +51,14 @@ var _stop_queued := false
 var _punch_t := -1.0
 var _punch_amp := 1.0
 var _anim_t := 0.0
+var _blur_mat := ShaderMaterial.new()
 
 
 func _ready() -> void:
 	clip_contents = true
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	_blur_mat.shader = BLUR_SHADER
+	material = _blur_mat
 
 
 # ---------------------------------------------------------------- 状态查询
@@ -77,13 +82,13 @@ func final_offset() -> float:
 	return _target if state == State.STOPPING or state == State.SETTLING else offset
 
 
-func symbol_at(row: int, at_offset: float) -> String:
+func symbol_at(row: int, at_offset: float) -> SlotSymbol:
 	if strip.is_empty():
-		return ""
+		return null
 	return strip[posmod(int(roundf(at_offset)) - row, strip.size())]
 
 
-func result_symbol(row: int) -> String:
+func result_symbol(row: int) -> SlotSymbol:
 	return symbol_at(row, final_offset())
 
 
@@ -233,15 +238,16 @@ func _draw() -> void:
 	_draw_vgradient(Rect2(0, 0, w, h * 0.5), reel_color.darkened(0.3 * edge_shade), reel_color)
 	_draw_vgradient(Rect2(0, h * 0.5, w, h * 0.5), reel_color, reel_color.darkened(0.3 * edge_shade))
 
+	var blur := 0.0
+	if state == State.STARTING or state == State.SPINNING or state == State.STOPPING:
+		blur = clampf(velocity / maxf(spin_speed, 0.01), 0.0, 1.0)
+	_blur_mat.set_shader_parameter("blur", BLUR_LENGTH * blur)
 	if not strip.is_empty():
 		var base := floorf(offset)
 		var frac := offset - base
-		var blur := 0.0
-		if state == State.STARTING or state == State.SPINNING or state == State.STOPPING:
-			blur = clampf(velocity / maxf(spin_speed, 0.01), 0.0, 1.0)
 		for r in range(-1, rows):
-			var id := strip[posmod(int(base) - r, strip.size())]
-			_draw_cell(id, roundi(float(r) + frac), float(r) + frac, blur)
+			var sym := strip[posmod(int(base) - r, strip.size())]
+			_draw_cell(sym, roundi(float(r) + frac), float(r) + frac, blur)
 
 	# 圆柱明暗：上下压暗 + 一道横向高光
 	var dark := Color(0, 0, 0, 0.55 * edge_shade)
@@ -264,7 +270,7 @@ func _draw() -> void:
 		draw_rect(Rect2(Vector2.ZERO, size), Color(1, 1, 1, flash))
 
 
-func _draw_cell(id: String, row: int, u: float, blur: float) -> void:
+func _draw_cell(sym: SlotSymbol, row: int, u: float, blur: float) -> void:
 	var y0 := _map_y(u)
 	var y1 := _map_y(u + 1.0)
 	if y1 <= 0.0 or y0 >= size.y:
@@ -276,26 +282,26 @@ func _draw_cell(id: String, row: int, u: float, blur: float) -> void:
 		var hl: Color = highlights[row]
 		draw_rect(cell, Color(hl, 0.25 + 0.2 * pulse))
 
-	var sym := minf(cell_size.x * 0.8, cell_size.y * 0.86)
-	var pad := (1.0 - sym / cell_size.y) * 0.5
+	var tex: Texture2D = sym.texture if sym else null
+	# 按图片比例缩放进格子（留一点边）
+	var box := Vector2(cell_size.x * 0.8, cell_size.y * 0.86) * (sym.size_scale if sym else 1.0)
+	var tex_size := tex.get_size() if tex else box
+	var fit := minf(box.x / maxf(tex_size.x, 1.0), box.y / maxf(tex_size.y, 1.0))
+	var draw_size := tex_size * fit
+	var pad := (1.0 - draw_size.y / cell_size.y) * 0.5
 	var sy0 := _map_y(u + pad)
 	var sy1 := _map_y(u + 1.0 - pad)
 	var k := 1.0 + (0.08 * pulse if lit else 0.0)
-	var sz := Vector2(sym, sy1 - sy0) * k
+	var sz := Vector2(draw_size.x, sy1 - sy0) * k
 	var rect := Rect2(Vector2(size.x * 0.5, (sy0 + sy1) * 0.5) - sz * 0.5, sz)
 
-	var tex := SlotSymbols.texture(id)
-	var tex_blur: Texture2D = SlotSymbols.texture(id, true) if blur > 0.01 else null
-	if tex_blur:
-		# 高速时换成纵向模糊版，并略微拉长
-		draw_texture_rect(tex_blur, rect.grow_individual(0, sz.y * 0.15, 0, sz.y * 0.15), false, Color(1, 1, 1, blur))
-		if tex and blur < 0.99:
-			draw_texture_rect(tex, rect, false, Color(1, 1, 1, 1.0 - blur))
-	elif tex:
-		draw_texture_rect(tex, rect, false)
-	else:
+	if tex:
+		# 高速时略微拉长，配合着色器的纵向模糊
+		var stretch := sz.y * 0.15 * blur
+		draw_texture_rect(tex, rect.grow_individual(0, stretch, 0, stretch), false)
+	elif sym:
 		var font := ThemeDB.fallback_font
-		draw_string(font, Vector2(0, rect.get_center().y + 16), id.to_upper(), HORIZONTAL_ALIGNMENT_CENTER, size.x, 40, Color.BLACK)
+		draw_string(font, Vector2(0, rect.get_center().y + 16), sym.label(), HORIZONTAL_ALIGNMENT_CENTER, size.x, 40, Color.BLACK)
 
 	if dim > 0.0 and not lit:
 		draw_rect(cell, Color(0, 0, 0, dim))

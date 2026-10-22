@@ -1,18 +1,47 @@
 class_name Sfx
 extends Node
 ## 音效：池化的 AudioStreamPlayer（同一音效可重叠播放）+ 一个循环的滚轮转动声。
-## 音效文件在 assets/sfx/，同名 .ogg 优先于 .wav，直接覆盖即可替换。
+## 每个音效都是 Inspector 里的一个槽位，把 .wav / .ogg / .mp3 拖进去就能替换；留空 = 不播放。
 
-const DIR := "res://assets/sfx/"
-const NAMES := ["press", "lever", "spin_loop", "stop", "boom", "reach", "win", "win_big", "jackpot", "coin", "miss"]
 const POOL_SIZE := 24
-## spin_loop.wav 里"咔嗒"声的频率（次/秒）。播放音调 = 转速 / 此值，让声音和画面同步。
+## 默认 spin_loop.wav 里"咔嗒"声的频率（次/秒）。播放音调 = 转速 / 此值，让声音和画面同步。
 const LOOP_TICK_RATE := 16.0
 const LOOP_FADE_DB_PER_SEC := 900.0
 
 @export_range(-40.0, 6.0, 0.5, "suffix:dB") var master_db := 0.0
 
-var _streams := {}
+@export_group("操作")
+## 按停止键
+@export var press: AudioStream
+## 开始转动（拉杆）
+@export var lever: AudioStream
+## 转动中的循环声（会自动循环播放）
+@export var spin_loop: AudioStream:
+	set(v):
+		spin_loop = v
+		if v:
+			_make_looping(v)
+		if _loop:
+			_loop.stream = v
+## 停轮重击
+@export var stop: AudioStream
+## 最后一列停下、中奖时叠加的低频轰击
+@export var boom: AudioStream
+
+@export_group("中奖")
+## 听牌
+@export var reach: AudioStream
+## 小奖（Tier = NORMAL）
+@export var win: AudioStream
+## 中奖（Tier = BIG）
+@export var win_big: AudioStream
+## 大奖（Tier = JACKPOT）
+@export var jackpot: AudioStream
+## 金币声（随机音调连发）
+@export var coin: AudioStream
+## 听牌后没中
+@export var miss: AudioStream
+
 var _pool: Array[AudioStreamPlayer] = []
 var _next := 0
 var _loop: AudioStreamPlayer
@@ -21,31 +50,27 @@ var _loop_pitch := 1.0
 
 
 func _ready() -> void:
-	for n in NAMES:
-		for ext in [".ogg", ".wav"]:
-			if ResourceLoader.exists(DIR + n + ext):
-				_streams[n] = load(DIR + n + ext)
-				break
 	for i in POOL_SIZE:
 		var p := AudioStreamPlayer.new()
 		add_child(p)
 		_pool.append(p)
 	_loop = AudioStreamPlayer.new()
 	add_child(_loop)
-	var s: AudioStream = _streams.get("spin_loop")
-	if s:
-		_make_looping(s)
-		_loop.stream = s
+	_loop.stream = spin_loop
 	_loop.volume_db = -80.0
 	_add_limiter()
 
 
+## 按槽位名播放，例如 play("stop")
 func play(sound: String, pitch := 1.0, volume_db := 0.0) -> void:
-	var s: AudioStream = _streams.get(sound)
-	if s == null:
+	play_stream(get(sound) as AudioStream, pitch, volume_db)
+
+
+func play_stream(stream: AudioStream, pitch := 1.0, volume_db := 0.0) -> void:
+	if stream == null:
 		return
 	var p := _free_player()
-	p.stream = s
+	p.stream = stream
 	p.pitch_scale = maxf(pitch, 0.01)
 	p.volume_db = volume_db + master_db
 	p.play()

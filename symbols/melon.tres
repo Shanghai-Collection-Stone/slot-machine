@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="SlotSymbol" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/slot_symbol.gd" id="1_qaq1g"]
+[ext_resource type="Texture2D" path="res://assets/symbols/melon.png" id="2_gfd6e"]
+
+[resource]
+script = ExtResource("1_qaq1g")
+id = "melon"
+display_name = "西瓜"
+texture = ExtResource("2_gfd6e")
+tier = 0
+color = Color(0.45, 1, 0.45, 1)
+count = 3
+size_scale = 1.0

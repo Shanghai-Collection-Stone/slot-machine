@@ -185,12 +185,12 @@ func _match_lines(unknown_needed: int, hypo: Reel = null, hypo_offset := 0.0, la
 	if machine.reels.size() < 2:
 		return result
 	for line in machine.get_lines():
-		var sym := ""
+		var sym: SlotSymbol = null
 		var ok := true
 		var unknown := 0
 		for i in machine.reels.size():
 			var r := machine.reels[i]
-			var s := ""
+			var s: SlotSymbol
 			if r == hypo:
 				s = r.symbol_at(line[i], hypo_offset)
 			elif r.is_spinning() or (landed_only and not r.has_landed()):
@@ -198,12 +198,11 @@ func _match_lines(unknown_needed: int, hypo: Reel = null, hypo_offset := 0.0, la
 				continue
 			else:
 				s = r.result_symbol(line[i])
-			if sym.is_empty():
-				sym = s
-			elif s != sym:
+			if s == null or not s.pays() or (sym != null and s != sym):
 				ok = false
 				break
-		if ok and unknown == unknown_needed and not sym.is_empty():
+			sym = s
+		if ok and unknown == unknown_needed and sym != null:
 			result.append({"line": line, "symbol": sym})
 	return result
 
@@ -257,14 +256,13 @@ func _check_reach() -> void:
 	if lines.is_empty():
 		return
 	_reached = true
-	var big := false
-	for l in lines:
-		big = big or SlotSymbols.tier(l.symbol) == SlotSymbols.Tier.JACKPOT
+	var top := _top_symbol(lines)
+	var big := top.tier == SlotSymbol.Tier.JACKPOT
 	machine.show_reach(lines)
 	sfx.play("reach", 1.06 if big else 1.0)
 	sfx.set_loop(0.0, machine.spin_speed / Sfx.LOOP_TICK_RATE * 1.08)  # 紧张感：转动声变大变尖
 	shaker.add_trauma(0.25 if big else 0.15)
-	_flash(SlotSymbols.color(lines[0].symbol), 0.45 if big else 0.22, 0.4)
+	_flash(top.color, 0.45 if big else 0.22, 0.4)
 	_rumble(0.3, 0.2, 0.2)
 
 
@@ -277,15 +275,22 @@ func _on_all_stopped() -> void:
 			sfx.play("miss")
 		return
 	phase = Phase.RESULT
-	var tier: int = SlotSymbols.Tier.NORMAL
-	for w in wins:
-		tier = maxi(tier, SlotSymbols.tier(w.symbol))
+	var top := _top_symbol(wins)
 	var id := _spin_id
 	if hitstop:
-		await _hitstop(0.05 + 0.04 * tier)
+		await _hitstop(0.05 + 0.04 * top.tier)
 		if id != _spin_id:
 			return
-	_celebrate(wins, tier)
+	_celebrate(wins, top)
+
+
+## 多条线同时成立时，取中奖等级最高的符号来决定演出
+func _top_symbol(lines: Array) -> SlotSymbol:
+	var top: SlotSymbol = lines[0].symbol
+	for l in lines:
+		if l.symbol.tier > top.tier:
+			top = l.symbol
+	return top
 
 
 func _hitstop(duration: float) -> void:
@@ -294,11 +299,14 @@ func _hitstop(duration: float) -> void:
 	Engine.time_scale = 1.0
 
 
-func _celebrate(wins: Array, tier: int) -> void:
-	machine.show_wins(wins, tier == SlotSymbols.Tier.JACKPOT)
-	var main_col := SlotSymbols.color(wins[0].symbol)
+func _celebrate(wins: Array, top: SlotSymbol) -> void:
+	var tier := top.tier
+	machine.show_wins(wins, tier == SlotSymbol.Tier.JACKPOT)
+	var main_col := top.color
+	if top.win_sound:
+		sfx.play_stream(top.win_sound)
 	for w in wins:
-		var col := SlotSymbols.color(w.symbol)
+		var col: Color = w.symbol.color
 		for i in machine.reels.size():
 			var c := machine.cell_rect(i, w.line[i]).get_center()
 			fx.burst(c, col, 14 + 10 * tier)
@@ -306,15 +314,17 @@ func _celebrate(wins: Array, tier: int) -> void:
 
 	var area := Rect2(Vector2.ZERO, machine.size)
 	match tier:
-		SlotSymbols.Tier.NORMAL:
-			sfx.play("win")
+		SlotSymbol.Tier.NORMAL:
+			if not top.win_sound:
+				sfx.play("win")
 			shaker.add_trauma(0.3)
 			shaker.zoom_punch(0.25)
 			_flash(main_col, 0.25, 0.3)
 			_coins(6, 0.6)
 			_rumble(0.3, 0.3, 0.2)
-		SlotSymbols.Tier.BIG:
-			sfx.play("win_big")
+		SlotSymbol.Tier.BIG:
+			if not top.win_sound:
+				sfx.play("win_big")
 			sfx.play("boom", 0.9, -4.0)
 			shaker.add_trauma(0.6)
 			shaker.zoom_punch(0.5)
@@ -323,7 +333,8 @@ func _celebrate(wins: Array, tier: int) -> void:
 			_coins(16, 1.2)
 			_rumble(0.6, 0.8, 0.35)
 		_:
-			sfx.play("jackpot")
+			if not top.win_sound:
+				sfx.play("jackpot")
 			sfx.play("boom", 0.8)
 			shaker.add_trauma(1.0)
 			shaker.zoom_punch(0.9)
