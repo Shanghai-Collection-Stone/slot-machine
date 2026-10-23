@@ -1,6 +1,7 @@
 # 拉霸机 Slot Machine（Godot 4）
 
 3 列滚轮、每列 3 格，只显示滚轮内容，没有外壳。手动逐个停轮（目押），重点做了音效和打击感。
+滚轮做成向外鼓起的滚筒；启动后是待机画面（滚轮自己慢慢滚，每列显示"请开始"）；带循环背景音乐和可保存的设置界面。
 
 - 引擎：Godot **4.4+**（GDScript，Compatibility 渲染器，桌面横屏 1920×1080）
 - 中奖内容（符号图片、中奖等级、出现概率、音效）全部在编辑器 Inspector 里配置，换内容不用改代码
@@ -17,13 +18,41 @@
 | 开始（拉杆） | 空格 / 回车 / 鼠标左键 / 手柄 A |
 | 停第 1 / 2 / 3 列 | `Z` `X` `C`，或 `1` `2` `3`，或 `←` `↓` `→`，或直接点击该列滚轮，手柄 X / Y / B |
 | 停下一列（从左到右） | 转动中再按空格 |
-| 调整滚轮间距 | `[` 减小，`]` 增大（每次 10px，可在 Main 节点改步长） |
+| 打开设置 | Esc 或 F2（手柄 Back），转动中不能打开 |
 | 显示 / 隐藏帮助 | F1 |
 | 全屏 | F11 |
 
 按键在启动时自动注册。如果你在 **项目设置 → 输入映射** 里定义了同名动作（`slot_start`、`slot_stop_1`…），会优先使用你的设置。
 
-## 设置滚轮间距和外观
+## 待机画面
+
+- 启动后直接进入待机：各列滚轮自己慢慢滚动，每列中间有一块小遮罩，显示"请开始"并呼吸闪烁
+- 按开始键（或点击）立刻开转，遮罩淡出
+- 一局结束后闲置一段时间（默认 15 秒）自动回到待机。时间在 `Main` 节点 Inspector → 待机 → Attract Delay 里改，设为 0 则不回
+- 待机滚动速度、遮罩上的文字在 `SlotMachine` 节点的 Attract Speed、Prompt Text 里改
+
+## 设置界面
+
+按 **Esc** 或 **F2** 打开（转动中不能打开）。可以调：
+
+| 项目 | 说明 |
+| --- | --- |
+| 屏间距 | 滚轮之间的间距，拖动时上方的滚轮实时变化 |
+| 转速（目押难度） | 滚轮转动速度，越快越难目押 |
+| 背景音乐音量 | 0 = 静音 |
+| 音效音量 | 拖动时会播放一声金币声试听 |
+
+键盘操作：↑↓ 选择项目，←→ 调整数值，Enter 按按钮，Esc 取消（恢复打开前的值）。
+
+点"保存"后写入 `user://settings.cfg`，下次启动自动生效。这个文件的实际位置：
+
+- Windows：`%APPDATA%\Godot\app_userdata\Slot Machine\settings.cfg`
+- macOS：`~/Library/Application Support/Godot/app_userdata/Slot Machine/settings.cfg`
+- Linux：`~/.local/share/godot/app_userdata/Slot Machine/settings.cfg`
+
+删除这个文件就回到默认值。默认值就是场景里 Inspector 上的值（Reel Gap、Spin Speed 等），"恢复默认"按钮恢复的也是它们。
+
+## 设置滚轮间距和外观（编辑器里）
 
 打开 `scenes/main.tscn`，选中 **ShakeRoot/SlotMachine** 节点，在 Inspector 里修改，编辑器视图会实时预览：
 
@@ -34,9 +63,13 @@
 | Visible Rows | 每列可见格数 | 3 |
 | **Reel Gap** | **滚轮之间的间距（像素）** | 40 |
 | Cell Size | 每格的宽 × 高 | 300 × 210 |
-| Curvature | 圆柱弧度感，0 = 平面 | 0.35 |
+| Curvature | 突起程度：越大，中间一格越突出，上下两格越扁越暗，轮廓越像鼓起的滚筒；0 = 平面 | 0.8 |
 | Spin Speed | 转速（格/秒），决定目押难度 | 16 |
-| 外观 → Reel Color / Edge Shade | 滚轮底色、上下边缘压暗程度 | |
+| Attract Speed | 待机时自己滚动的速度（格/秒） | 1.6 |
+| Prompt Text | 待机时每列遮罩上的文字 | 请开始 |
+| 外观 → Reel Color / Edge Shade | 滚轮底色、上下压暗程度 | |
+
+这里的 Reel Gap 和 Spin Speed 是默认值；玩家在设置界面里保存过的值会覆盖它们。
 
 背景色在 `Background` 节点上改；不需要背景可以直接删掉这个节点。
 
@@ -98,12 +131,13 @@
 
 强度可在 Main 节点 Inspector → 打击感 里调整（震屏倍率、顿帧开关、手柄震动开关）。
 
-## 更换音效和粒子贴图
+## 更换音乐、音效和粒子贴图
 
-**音效**：选中 `Sfx` 节点，Inspector 里每个音效都是一个槽位，把 `.wav` / `.ogg` / `.mp3` 拖进去即可，留空就不播放：
+**音乐和音效**：选中 `Sfx` 节点，Inspector 里每个声音都是一个槽位，把 `.wav` / `.ogg` / `.mp3` 拖进去即可，留空就不播放：
 
 | 槽位 | 用途 |
 | --- | --- |
+| Bgm | 背景音乐，会自动循环播放。Bgm Db 调它相对音效的基础音量 |
 | Press | 按停止键 |
 | Lever | 开始转动 |
 | Spin Loop | 转动循环声（会自动循环播放，音调随转速变化） |
@@ -114,6 +148,8 @@
 | Coin | 金币声（随机音调连发） |
 | Miss | 听牌后没中 |
 
+BGM 和音效分别走 `BGM`、`SFX` 两条音频总线（设置界面里的两个音量调的就是它们）。每次停轮和中奖时 BGM 会被瞬间压低一下，让重击和中奖音乐更突出。
+
 **粒子贴图**：选中 `ShakeRoot/FX` 节点，可以替换 Spark（停轮火花）、Star（中奖星光）、Coin（金币，比如换成你的奖品图标）。金币图不管多大，默认都显示成约 64 像素，可以用 Coin Scale 调大小。
 
 ## 重新生成素材
@@ -122,7 +158,7 @@
 
 ```bash
 python3 tools/gen_symbols.py   # 符号、粒子贴图、图标
-python3 tools/gen_sfx.py       # 音效
+python3 tools/gen_sfx.py       # 音效和背景音乐（BGM 转 .ogg 需要 ffmpeg，没有则输出 .wav）
 ```
 
 这两个脚本只用来生成默认素材（会覆盖 `assets/` 里同名文件）。用你自己的素材时不需要它们，直接在 Inspector 里换即可。
@@ -135,13 +171,16 @@ symbols/                中奖内容：每个符号一个 .tres，default_set.tr
 scripts/
   main.gd               游戏流程、输入、打击感演出编排
   slot_machine.gd       拉霸机本体（@tool）：布局、间距、中奖线、高亮
-  reel.gd               单列滚轮（@tool）：转动、停轮回弹、绘制
+  reel.gd               单列滚轮（@tool）：转动、停轮回弹、待机自转、鼓面绘制
   slot_symbol.gd        符号资源（图片、等级、颜色、出现次数…）
   slot_symbol_set.gd    符号组资源（用哪些符号、滚轮带怎么排）
   win_overlay.gd        中奖连线层
+  prompt_overlay.gd     待机时每列的"请开始"遮罩
+  settings_panel.gd     设置界面
+  game_settings.gd      设置的读取与保存（user://settings.cfg）
   shaker.gd             震屏 / 冲击位移 / 缩放冲击
   fx.gd                 粒子与冲击环
-  sfx.gd                音效槽位、音效池、转动循环声
+  sfx.gd                背景音乐、音效槽位、音效池、转动循环声、音量总线
 shaders/reel_blur.gdshader  转动时的纵向运动模糊
 assets/                 默认贴图与音效（由 tools/ 生成）
 tools/                  默认素材的生成脚本（Godot 会忽略此目录）

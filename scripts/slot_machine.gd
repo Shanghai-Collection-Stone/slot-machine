@@ -27,7 +27,7 @@ signal reel_clicked(reel: Reel)
 	set(v):
 		visible_rows = v
 		_rebuild()
-## 滚轮之间的间距（像素）。运行时也可以用 [ ] 键调整。
+## 滚轮之间的间距（像素）。这是默认值，运行时可在设置界面（Esc）里调整并保存。
 @export_range(0, 1000, 1, "or_greater", "suffix:px") var reel_gap := 40.0:
 	set(v):
 		reel_gap = maxf(v, 0.0)
@@ -37,8 +37,8 @@ signal reel_clicked(reel: Reel)
 	set(v):
 		cell_size = v
 		_layout()
-## 圆柱弧度感：0 = 平面，1 = 很弯
-@export_range(0.0, 1.0, 0.01) var curvature := 0.35:
+## 突起程度（滚筒鼓起的感觉）：0 = 平面；越大中间一格越突出，上下两格越扁越暗
+@export_range(0.0, 1.0, 0.01) var curvature := 0.8:
 	set(v):
 		curvature = v
 		_apply_settings()
@@ -48,6 +48,18 @@ signal reel_clicked(reel: Reel)
 		spin_speed = v
 		_apply_settings()
 
+## 待机时自己滚动的速度（格/秒）
+@export_range(0.0, 10.0, 0.1) var attract_speed := 1.6:
+	set(v):
+		attract_speed = v
+		_apply_settings()
+## 待机时每列遮罩上显示的文字
+@export var prompt_text := "请开始":
+	set(v):
+		prompt_text = v
+		if prompt:
+			prompt.text = v
+
 @export_group("外观")
 ## 滚轮底色
 @export var reel_color := Color(0.98, 0.96, 0.9):
@@ -55,13 +67,14 @@ signal reel_clicked(reel: Reel)
 		reel_color = v
 		_apply_settings()
 ## 上下边缘压暗程度（圆柱立体感）
-@export_range(0.0, 1.0, 0.01) var edge_shade := 0.6:
+@export_range(0.0, 1.0, 0.01) var edge_shade := 0.75:
 	set(v):
 		edge_shade = v
 		_apply_settings()
 
 var reels: Array[Reel] = []
 var overlay: WinOverlay
+var prompt: PromptOverlay
 ## 停轮落点决策（由 main 注入，用于"滑动补正"）
 var stop_resolver: Callable:
 	set(v):
@@ -86,9 +99,10 @@ func _rebuild() -> void:
 		remove_child(r)
 		r.queue_free()
 	reels.clear()
-	if overlay:
-		remove_child(overlay)
-		overlay.queue_free()
+	for layer in [prompt, overlay]:
+		if layer:
+			remove_child(layer)
+			layer.queue_free()
 
 	for i in reel_count:
 		var reel := Reel.new()
@@ -104,6 +118,11 @@ func _rebuild() -> void:
 		add_child(reel)
 		reels.append(reel)
 
+	prompt = PromptOverlay.new()
+	prompt.name = "PromptOverlay"
+	prompt.machine = self
+	prompt.text = prompt_text
+	add_child(prompt)
 	overlay = WinOverlay.new()
 	overlay.name = "WinOverlay"
 	overlay.machine = self
@@ -118,7 +137,7 @@ func _on_symbols_changed() -> void:
 	if not is_node_ready():
 		return
 	for r in reels:
-		if r.state != Reel.State.IDLE:
+		if not r.is_resting():
 			return
 	for r in reels:
 		r.strip = _strip_for(r.index)
@@ -144,6 +163,7 @@ func _apply_settings() -> void:
 	for r in reels:
 		r.curvature = curvature
 		r.spin_speed = spin_speed
+		r.attract_speed = attract_speed
 		r.reel_color = reel_color
 		r.edge_shade = edge_shade
 		r.stop_resolver = stop_resolver
@@ -163,10 +183,11 @@ func _layout() -> void:
 		r.size = reel_size
 		r.pivot_offset = reel_size * 0.5
 		r.queue_redraw()
-	if overlay:
-		overlay.position = Vector2.ZERO
-		overlay.size = size
-		overlay.queue_redraw()
+	for layer in [prompt, overlay]:
+		if layer:
+			layer.position = Vector2.ZERO
+			layer.size = size
+			layer.queue_redraw()
 
 
 # ---------------------------------------------------------------- 查询
@@ -236,6 +257,18 @@ static func _by_tier(lines: Array) -> Array:
 	var sorted := lines.duplicate()
 	sorted.sort_custom(func(a, b): return a.symbol.tier < b.symbol.tier)
 	return sorted
+
+
+## 进入待机：各列错开一点时间开始自己滚动
+func start_attract() -> void:
+	clear_wins()
+	for r in reels:
+		r.start_attract(r.index * 0.18)
+
+
+func show_prompt(on: bool, instant := false) -> void:
+	if prompt:
+		prompt.show_prompt(on, instant)
 
 
 func clear_wins() -> void:
