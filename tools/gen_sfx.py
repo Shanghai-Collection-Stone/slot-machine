@@ -3,7 +3,7 @@
 
     python3 tools/gen_sfx.py
 
-输出到 assets/sfx/*.wav（44.1kHz / 16bit / 单声道）。
+输出到 assets/sfx/*.wav（44.1kHz / 16bit / 单声道），背景音乐为 assets/sfx/bgm.ogg（需要 ffmpeg，没有则输出 .wav）。
 想换成自己的音效：用同名 .wav 或 .ogg 覆盖即可（同名 .ogg 优先于 .wav）。
 依赖：numpy。
 
@@ -13,6 +13,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import wave
 
 import numpy as np
@@ -384,6 +386,158 @@ def snd_miss():
     return x * env
 
 
+# ---------------------------------------------------------------- BGM
+
+BGM_BPM = 120
+BGM_BARS = 16
+# (和弦音 MIDI, 贝斯根音 MIDI)
+CHORDS = {
+    "C": ([60, 64, 67, 71], 36),
+    "Am": ([57, 60, 64, 67], 45),
+    "Dm": ([62, 65, 69, 72], 38),
+    "G": ([55, 59, 62, 65], 43),
+    "F": ([53, 57, 60, 64], 41),
+    "Em": ([52, 55, 59, 62], 40),
+    "Gsus": ([55, 60, 62, 65], 43),
+}
+PROGRESSION = ["C", "Am", "Dm", "G"] * 3 + ["F", "Em", "Dm", "Gsus"]
+# 旋律（第 9~16 小节）：(小节, 拍, MIDI, 时值拍数)
+MELODY = [
+    (8, 0, 76, 0.5), (8, 0.5, 79, 0.5), (8, 1, 84, 1), (8, 2, 81, 0.5), (8, 2.5, 79, 1.5),
+    (9, 0, 76, 0.5), (9, 0.5, 79, 0.5), (9, 1, 81, 1), (9, 2, 79, 0.5), (9, 2.5, 76, 1.5),
+    (10, 0, 74, 0.5), (10, 0.5, 77, 0.5), (10, 1, 81, 1), (10, 2, 79, 0.5), (10, 2.5, 77, 0.5), (10, 3, 74, 1),
+    (11, 0, 71, 0.5), (11, 0.5, 74, 0.5), (11, 1, 79, 1.5), (11, 3, 77, 0.5), (11, 3.5, 74, 0.5),
+    (12, 0, 72, 0.5), (12, 0.5, 77, 0.5), (12, 1, 81, 1), (12, 2, 84, 1), (12, 3, 81, 1),
+    (13, 0, 79, 1), (13, 1, 76, 0.5), (13, 1.5, 79, 0.5), (13, 2, 83, 1), (13, 3, 79, 1),
+    (14, 0, 77, 0.5), (14, 0.5, 81, 0.5), (14, 1, 84, 1), (14, 2, 86, 1), (14, 3, 84, 0.5), (14, 3.5, 81, 0.5),
+    (15, 0, 83, 1), (15, 1, 86, 1),
+] + [(15, 2 + i * 0.25, n, 0.25) for i, n in enumerate([79, 81, 83, 84, 86, 88, 89, 91])]  # 上行琶音接回开头
+
+
+def midi(n):
+    return 440.0 * 2 ** ((n - 69) / 12)
+
+
+def ep_note(freq, dur, vel=1.0):
+    """电钢琴：FM 音色 + 颤音。"""
+    d = dur + 0.25
+    t = tline(d)
+    mod = np.sin(2 * np.pi * freq * t) * 1.6 * np.exp(-t / 0.3)
+    x = np.sin(2 * np.pi * freq * t + mod) + 0.15 * np.sin(2 * np.pi * freq * 4 * t) * np.exp(-t / 0.04)
+    env = np.clip(t / 0.004, 0, 1) * (0.45 + 0.55 * np.exp(-t / 0.35)) * np.clip((d - t) / 0.25, 0, 1)
+    return x * env * (1 + 0.12 * np.sin(2 * np.pi * 5 * t)) * vel
+
+
+_bass_cache: dict = {}
+
+
+def bass_note(note, dur):
+    key = (note, round(dur, 3))
+    if key not in _bass_cache:
+        f = midi(note)
+        d = dur + 0.05
+        t = tline(d)
+        x = 0.6 * saw(f, d) + 0.6 * sine(f, d) + 0.25 * sine(f * 2, d)
+        x = biquad(x, "lp", 250 + 1400 * np.exp(-t / 0.06), 1.0)
+        env = np.clip(t / 0.005, 0, 1) * (0.6 + 0.4 * np.exp(-t / 0.15)) * np.clip((d - t) / 0.04, 0, 1)
+        _bass_cache[key] = x * env
+    return _bass_cache[key]
+
+
+def drum_kick():
+    d = 0.35
+    t = tline(d)
+    body = sine(48 + 110 * np.exp(-t / 0.03), d) * env_exp(d, 0.16, 0.001)
+    return body + biquad(noise(d), "hp", 3000) * np.exp(-t / 0.002) * 0.3
+
+
+def drum_clap():
+    d = 0.3
+    x = np.zeros(ns(d))
+    for i, at in enumerate([0.0, 0.011, 0.022]):
+        place(x, biquad(noise(0.02), "bp", 1500, 1.2) * env_exp(0.02, 0.006, 0), at, 1.0 - i * 0.15)
+    place(x, biquad(noise(0.25), "bp", 1300, 0.9) * env_exp(0.25, 0.07, 0.001), 0.022, 0.8)
+    return x
+
+
+def drum_snare():
+    d = 0.2
+    return sine(190, d) * env_exp(d, 0.04) * 0.5 + biquad(noise(d), "bp", 2400, 0.7) * env_exp(d, 0.07, 0.001)
+
+
+def drum_hat(open_=False):
+    d = 0.3 if open_ else 0.06
+    return biquad(noise(d), "hp", 7500) * env_exp(d, 0.14 if open_ else 0.02, 0.0005)
+
+
+def snd_bgm():
+    """背景音乐：120 BPM、16 小节、正好 32 秒，可无缝循环。
+    四拍底鼓 + 反拍镲 + 走动贝斯 + 电钢琴切分和弦 + 后半段铃声旋律。"""
+    spb = SR * 60 // BGM_BPM  # 每拍采样数
+    total = spb * 4 * BGM_BARS
+    tail = ns(2.0)
+    drums = np.zeros(total + tail)
+    bass = np.zeros(total + tail)
+    keys = np.zeros(total + tail)
+    bells = np.zeros(total + tail)
+
+    def at(bar, beat):
+        return (bar * 4 + beat) * spb / SR
+
+    kick, clap, snare = drum_kick(), drum_clap(), drum_snare()
+    hats = [drum_hat() for _ in range(4)]
+    open_hat = drum_hat(True)
+
+    for bar, name in enumerate(PROGRESSION):
+        chord, root = CHORDS[name]
+        next_root = CHORDS[PROGRESSION[(bar + 1) % BGM_BARS]][1]
+        full = bar >= 4  # 前 4 小节轻一点，后面加拍手和十六分镲
+        for beat in range(4):
+            place(drums, kick, at(bar, beat), 0.9)
+            place(drums, open_hat if beat == 3 and bar % 2 else hats[beat], at(bar, beat + 0.5), 0.32)
+            if full:
+                if beat in (1, 3):
+                    place(drums, clap, at(bar, beat), 0.55)
+                for q in (0.25, 0.75):
+                    place(drums, hats[(beat + 1) % 4], at(bar, beat + q), 0.1)
+        if bar == BGM_BARS - 1:  # 最后一小节军鼓加花，接回开头
+            for i in range(8):
+                place(drums, snare, at(bar, 2 + i * 0.25), 0.25 + i * 0.05)
+
+        approach = next_root - 1 if next_root != root else root + 10
+        for e, note, length in [(0, root, 1.4), (3, root + 12, 0.6), (4, root, 1.4), (6, root + 7, 0.7), (7, approach, 0.6)]:
+            place(bass, bass_note(note, length * spb / 2 / SR), at(bar, e / 2), 0.55)
+
+        hits = [(0, 1.4, 0.9), (1.5, 0.35, 0.65), (2.5, 1.3, 0.8)] + ([(3.5, 0.3, 0.55)] if bar % 2 else [])
+        for beat, length, vel in hits:
+            for n in chord:
+                place(keys, ep_note(midi(n), length * spb / SR, vel), at(bar, beat), 0.16)
+
+        if bar < 8:  # 前半段：高八度的稀疏琶音点缀
+            for beat, idx in [(0.5, 1), (1.5, 2), (2.5, 3), (3.5, 2)]:
+                place(bells, bell(midi(chord[idx] + 12), 0.6, 0.25, 0.6), at(bar, beat), 0.12)
+
+    for bar, beat, note, length in MELODY:
+        place(bells, bell(midi(note), length * spb / SR + 0.5, 0.35, 0.9), at(bar, beat), 0.32)
+
+    bells = echo(bells, taps=((0.375, 0.35), (0.75, 0.18), (1.125, 0.08)), tail=0.0)[: total + tail]
+    keys = echo(keys, taps=((0.375, 0.18), (0.75, 0.08)), tail=0.0)[: total + tail]
+    x = softclip(drums * 0.9 + bass, 1.3) + keys + bells
+    x[:tail] += x[total:]  # 尾音绕回开头，保证循环无缝
+    return x[:total]
+
+
+def write_ogg(name, x, peak_db):
+    """BGM 体积较大：有 ffmpeg 时转成 OGG，否则保留 WAV。"""
+    write(name, x, peak_db, fade=False)
+    wav = os.path.join(OUT_DIR, f"{name}.wav")
+    if shutil.which("ffmpeg"):
+        ogg = os.path.join(OUT_DIR, f"{name}.ogg")
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", wav, "-c:a", "libvorbis", "-q:a", "5", ogg], check=True)
+        os.remove(wav)
+        print(f"{name:10s} -> {name}.ogg")
+
+
 SOUNDS = [
     # name, fn, peak dB, fade
     ("press", snd_press, -8.0, True),
@@ -404,6 +558,7 @@ def main() -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
     for name, fn, peak, fade in SOUNDS:
         write(name, fn(), peak, fade)
+    write_ogg("bgm", snd_bgm(), -3.0)
 
 
 if __name__ == "__main__":

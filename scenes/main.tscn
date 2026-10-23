@@ -1,10 +1,26 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=22 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/shaker.gd" id="2_shaker"]
 [ext_resource type="Script" path="res://scripts/slot_machine.gd" id="3_machine"]
 [ext_resource type="Script" path="res://scripts/fx.gd" id="4_fx"]
 [ext_resource type="Script" path="res://scripts/sfx.gd" id="5_sfx"]
+[ext_resource type="Resource" path="res://symbols/default_set.tres" id="6_symbols"]
+[ext_resource type="Texture2D" path="res://assets/fx/spark.png" id="fx_spark"]
+[ext_resource type="Texture2D" path="res://assets/fx/star.png" id="fx_star"]
+[ext_resource type="Texture2D" path="res://assets/fx/coin.png" id="fx_coin"]
+[ext_resource type="AudioStream" path="res://assets/sfx/bgm.ogg" id="sfx_bgm"]
+[ext_resource type="AudioStream" path="res://assets/sfx/press.wav" id="sfx_press"]
+[ext_resource type="AudioStream" path="res://assets/sfx/lever.wav" id="sfx_lever"]
+[ext_resource type="AudioStream" path="res://assets/sfx/spin_loop.wav" id="sfx_spin_loop"]
+[ext_resource type="AudioStream" path="res://assets/sfx/stop.wav" id="sfx_stop"]
+[ext_resource type="AudioStream" path="res://assets/sfx/boom.wav" id="sfx_boom"]
+[ext_resource type="AudioStream" path="res://assets/sfx/reach.wav" id="sfx_reach"]
+[ext_resource type="AudioStream" path="res://assets/sfx/win.wav" id="sfx_win"]
+[ext_resource type="AudioStream" path="res://assets/sfx/win_big.wav" id="sfx_win_big"]
+[ext_resource type="AudioStream" path="res://assets/sfx/jackpot.wav" id="sfx_jackpot"]
+[ext_resource type="AudioStream" path="res://assets/sfx/coin.wav" id="sfx_coin"]
+[ext_resource type="AudioStream" path="res://assets/sfx/miss.wav" id="sfx_miss"]
 
 [node name="Main" type="Control"]
 layout_mode = 3
@@ -45,10 +61,14 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("3_machine")
+symbol_set = ExtResource("6_symbols")
 reel_gap = 40.0
 
 [node name="FX" type="Node2D" parent="ShakeRoot"]
 script = ExtResource("4_fx")
+spark_texture = ExtResource("fx_spark")
+star_texture = ExtResource("fx_star")
+coin_texture = ExtResource("fx_coin")
 
 [node name="Flash" type="ColorRect" parent="."]
 layout_mode = 1
@@ -99,9 +119,21 @@ theme_override_constants/outline_size = 8
 theme_override_font_sizes/font_size = 24
 text = "空格 / 回车 / 点击：开始（转动中再按 = 从左到右停下一列）
 Z X C  ·  1 2 3  ·  ← ↓ →  ·  点击滚轮：停对应的列
-[  ]：调整滚轮间距      F11：全屏      F1：隐藏帮助"
+Esc / F2：设置（屏间距、转速、音量）      F11：全屏      F1：隐藏帮助"
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="Sfx" type="Node" parent="."]
 script = ExtResource("5_sfx")
+bgm = ExtResource("sfx_bgm")
+press = ExtResource("sfx_press")
+lever = ExtResource("sfx_lever")
+spin_loop = ExtResource("sfx_spin_loop")
+stop = ExtResource("sfx_stop")
+boom = ExtResource("sfx_boom")
+reach = ExtResource("sfx_reach")
+win = ExtResource("sfx_win")
+win_big = ExtResource("sfx_win_big")
+jackpot = ExtResource("sfx_jackpot")
+coin = ExtResource("sfx_coin")
+miss = ExtResource("sfx_miss")

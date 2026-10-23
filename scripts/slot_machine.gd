@@ -2,12 +2,21 @@
 class_name SlotMachine
 extends Control
 ## 拉霸机本体：只有"屏幕内容"——若干列滚轮 + 中奖连线层，没有外壳。
-## 在编辑器里选中本节点即可调整列数、可见格数、间距等，改动会实时预览。
+## 在编辑器里选中本节点即可调整中奖内容、列数、可见格数、间距等，改动会实时预览。
 
 signal reel_impact(reel: Reel)
 signal reel_settled(reel: Reel)
 signal reel_clicked(reel: Reel)
 
+## 中奖内容：用哪些符号、每列滚轮带怎么排（见 symbols/ 目录）。换一整套内容就换这里。
+@export var symbol_set: SlotSymbolSet:
+	set(v):
+		if symbol_set and symbol_set.changed.is_connected(_on_symbols_changed):
+			symbol_set.changed.disconnect(_on_symbols_changed)
+		symbol_set = v
+		if symbol_set:
+			symbol_set.changed.connect(_on_symbols_changed)
+		_on_symbols_changed()
 ## 滚轮列数
 @export_range(1, 5) var reel_count := 3:
 	set(v):
@@ -18,7 +27,7 @@ signal reel_clicked(reel: Reel)
 	set(v):
 		visible_rows = v
 		_rebuild()
-## 滚轮之间的间距（像素）。运行时也可以用 [ ] 键调整。
+## 滚轮之间的间距（像素）。这是默认值，运行时可在设置界面（Esc）里调整并保存。
 @export_range(0, 1000, 1, "or_greater", "suffix:px") var reel_gap := 40.0:
 	set(v):
 		reel_gap = maxf(v, 0.0)
@@ -28,8 +37,8 @@ signal reel_clicked(reel: Reel)
 	set(v):
 		cell_size = v
 		_layout()
-## 圆柱弧度感：0 = 平面，1 = 很弯
-@export_range(0.0, 1.0, 0.01) var curvature := 0.35:
+## 突起程度（滚筒鼓起的感觉）：0 = 平面；越大中间一格越突出，上下两格越扁越暗
+@export_range(0.0, 1.0, 0.01) var curvature := 0.8:
 	set(v):
 		curvature = v
 		_apply_settings()
@@ -39,6 +48,18 @@ signal reel_clicked(reel: Reel)
 		spin_speed = v
 		_apply_settings()
 
+## 待机时自己滚动的速度（格/秒）
+@export_range(0.0, 10.0, 0.1) var attract_speed := 1.6:
+	set(v):
+		attract_speed = v
+		_apply_settings()
+## 待机时每列遮罩上显示的文字
+@export var prompt_text := "请开始":
+	set(v):
+		prompt_text = v
+		if prompt:
+			prompt.text = v
+
 @export_group("外观")
 ## 滚轮底色
 @export var reel_color := Color(0.98, 0.96, 0.9):
@@ -46,13 +67,14 @@ signal reel_clicked(reel: Reel)
 		reel_color = v
 		_apply_settings()
 ## 上下边缘压暗程度（圆柱立体感）
-@export_range(0.0, 1.0, 0.01) var edge_shade := 0.6:
+@export_range(0.0, 1.0, 0.01) var edge_shade := 0.75:
 	set(v):
 		edge_shade = v
 		_apply_settings()
 
 var reels: Array[Reel] = []
 var overlay: WinOverlay
+var prompt: PromptOverlay
 ## 停轮落点决策（由 main 注入，用于"滑动补正"）
 var stop_resolver: Callable:
 	set(v):
@@ -77,26 +99,30 @@ func _rebuild() -> void:
 		remove_child(r)
 		r.queue_free()
 	reels.clear()
-	if overlay:
-		remove_child(overlay)
-		overlay.queue_free()
+	for layer in [prompt, overlay]:
+		if layer:
+			remove_child(layer)
+			layer.queue_free()
 
 	for i in reel_count:
 		var reel := Reel.new()
 		reel.name = "Reel%d" % (i + 1)
 		reel.index = i
-		reel.strip = SlotSymbols.strip(i)
 		reel.rows = visible_rows
-		if Engine.is_editor_hint():
-			reel.offset = float((i * 7) % reel.strip.size())
-		else:
-			reel.offset = float(randi() % reel.strip.size())
+		reel.strip = _strip_for(i)
+		var n := maxi(reel.strip.size(), 1)
+		reel.offset = float((i * 7) % n) if Engine.is_editor_hint() else float(randi() % n)
 		reel.impact.connect(reel_impact.emit)
 		reel.settled.connect(reel_settled.emit)
 		reel.clicked.connect(reel_clicked.emit)
 		add_child(reel)
 		reels.append(reel)
 
+	prompt = PromptOverlay.new()
+	prompt.name = "PromptOverlay"
+	prompt.machine = self
+	prompt.text = prompt_text
+	add_child(prompt)
 	overlay = WinOverlay.new()
 	overlay.name = "WinOverlay"
 	overlay.machine = self
@@ -105,10 +131,39 @@ func _rebuild() -> void:
 	_layout()
 
 
+## 符号组或其中某个符号被修改：编辑器里立刻刷新预览；运行中只在滚轮全部静止时刷新
+func _on_symbols_changed() -> void:
+	update_configuration_warnings()
+	if not is_node_ready():
+		return
+	for r in reels:
+		if not r.is_resting():
+			return
+	for r in reels:
+		r.strip = _strip_for(r.index)
+		r.offset = fposmod(r.offset, maxi(r.strip.size(), 1))
+		r.queue_redraw()
+
+
+func _strip_for(reel_index: int) -> Array[SlotSymbol]:
+	if symbol_set:
+		return symbol_set.build_strip(reel_index)
+	return []
+
+
+func _get_configuration_warnings() -> PackedStringArray:
+	if symbol_set == null:
+		return PackedStringArray(["请在 Symbol Set 里指定一个符号组，例如 res://symbols/default_set.tres"])
+	if not symbol_set.is_usable():
+		return PackedStringArray(["符号组里没有可用的符号：检查 Symbols 列表和各符号的 Count"])
+	return PackedStringArray()
+
+
 func _apply_settings() -> void:
 	for r in reels:
 		r.curvature = curvature
 		r.spin_speed = spin_speed
+		r.attract_speed = attract_speed
 		r.reel_color = reel_color
 		r.edge_shade = edge_shade
 		r.stop_resolver = stop_resolver
@@ -128,10 +183,11 @@ func _layout() -> void:
 		r.size = reel_size
 		r.pivot_offset = reel_size * 0.5
 		r.queue_redraw()
-	if overlay:
-		overlay.position = Vector2.ZERO
-		overlay.size = size
-		overlay.queue_redraw()
+	for layer in [prompt, overlay]:
+		if layer:
+			layer.position = Vector2.ZERO
+			layer.size = size
+			layer.queue_redraw()
 
 
 # ---------------------------------------------------------------- 查询
@@ -177,7 +233,7 @@ func show_wins(wins: Array, rainbow := false) -> void:
 		r.reach_glow = false
 		r.dim = 0.45
 	for w in _by_tier(wins):
-		var col := SlotSymbols.color(w.symbol)
+		var col: Color = w.symbol.color
 		for i in reels.size():
 			reels[i].highlights[w.line[i]] = col
 	overlay.show_wins(wins, rainbow)
@@ -186,7 +242,7 @@ func show_wins(wins: Array, rainbow := false) -> void:
 ## 听牌：已停的格子高亮，还在转的那一列发光
 func show_reach(lines: Array) -> void:
 	for w in _by_tier(lines):
-		var col := SlotSymbols.color(w.symbol)
+		var col: Color = w.symbol.color
 		for i in reels.size():
 			var r := reels[i]
 			if r.has_landed():
@@ -199,8 +255,20 @@ func show_reach(lines: Array) -> void:
 ## 低等级在前：同一格/同一列被多条线覆盖时，最终显示高等级符号的颜色
 static func _by_tier(lines: Array) -> Array:
 	var sorted := lines.duplicate()
-	sorted.sort_custom(func(a, b): return SlotSymbols.tier(a.symbol) < SlotSymbols.tier(b.symbol))
+	sorted.sort_custom(func(a, b): return a.symbol.tier < b.symbol.tier)
 	return sorted
+
+
+## 进入待机：各列错开一点时间开始自己滚动
+func start_attract() -> void:
+	clear_wins()
+	for r in reels:
+		r.start_attract(r.index * 0.18)
+
+
+func show_prompt(on: bool, instant := false) -> void:
+	if prompt:
+		prompt.show_prompt(on, instant)
 
 
 func clear_wins() -> void:

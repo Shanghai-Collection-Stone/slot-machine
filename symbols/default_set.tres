@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="SlotSymbolSet" load_steps=10 format=3]
+
+[ext_resource type="Script" path="res://scripts/slot_symbol_set.gd" id="1_v7cgb"]
+[ext_resource type="Script" path="res://scripts/slot_symbol.gd" id="2_e1daw"]
+[ext_resource type="Resource" path="res://symbols/seven.tres" id="3_80noe"]
+[ext_resource type="Resource" path="res://symbols/bar.tres" id="4_4harp"]
+[ext_resource type="Resource" path="res://symbols/star.tres" id="5_5o2fw"]
+[ext_resource type="Resource" path="res://symbols/bell.tres" id="6_dw3kq"]
+[ext_resource type="Resource" path="res://symbols/melon.tres" id="7_bhi6g"]
+[ext_resource type="Resource" path="res://symbols/grape.tres" id="8_r6jqh"]
+[ext_resource type="Resource" path="res://symbols/cherry.tres" id="9_evamb"]
+
+[resource]
+script = ExtResource("1_v7cgb")
+symbols = Array[ExtResource("2_e1daw")]([ExtResource("3_80noe"), ExtResource("4_4harp"), ExtResource("5_5o2fw"), ExtResource("6_dw3kq"), ExtResource("7_bhi6g"), ExtResource("8_r6jqh"), ExtResource("9_evamb")])
+custom_strips = Array[PackedStringArray]([])

@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="SlotSymbol" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/slot_symbol.gd" id="1_utjcp"]
+[ext_resource type="Texture2D" path="res://assets/symbols/bell.png" id="2_riakl"]
+
+[resource]
+script = ExtResource("1_utjcp")
+id = "bell"
+display_name = "铃铛"
+texture = ExtResource("2_riakl")
+tier = 0
+color = Color(1, 0.85, 0.25, 1)
+count = 4
+size_scale = 1.0

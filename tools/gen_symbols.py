@@ -4,12 +4,12 @@
     python3 tools/gen_symbols.py
 
 输出：
-  assets/symbols/<id>.png       符号（256x256，透明背景）
-  assets/symbols/<id>_blur.png  纵向运动模糊版，滚轮高速转动时使用
-  assets/fx/*.png               粒子贴图（火花、星光、光晕、金币）
-  icon.png                      项目图标
+  assets/symbols/<id>.png  符号（256x256，透明背景）
+  assets/fx/*.png          粒子贴图（火花、星光、金币）
+  icon.png                 项目图标
 
-想换成自己的美术：直接用同名 PNG 覆盖即可（模糊版可以删掉，游戏会退回只用清晰版）。
+这些只是默认素材。换成自己的美术不需要这个脚本：在 Godot 里打开 symbols/*.tres，
+把 Texture 换成你的图片即可（运动模糊由着色器实时生成）。
 依赖：Pillow、numpy。
 """
 from __future__ import annotations
@@ -26,7 +26,6 @@ FX_DIR = os.path.join(ROOT, "assets", "fx")
 
 S = 1024  # 工作画布（4 倍超采样）
 OUT = 256  # 输出尺寸
-BLUR_PX = 60  # 模糊版的纵向拖影长度（输出像素）
 
 OUTLINE = (28, 12, 6)
 
@@ -355,34 +354,12 @@ def downsample(img: Image.Image, size: int) -> Image.Image:
     return img.convert("RGBa").resize((size, size), Image.LANCZOS).convert("RGBA")
 
 
-def motion_blur(img: Image.Image, length: int) -> Image.Image:
-    a = np.asarray(img).astype(np.float32) / 255.0
-    pm = np.concatenate([a[..., :3] * a[..., 3:4], a[..., 3:4]], axis=-1)
-    kernel = np.hanning(length + 2)[1:-1]
-    kernel /= kernel.sum()
-    out = np.zeros_like(pm)
-    for i, w in enumerate(kernel):
-        out += w * np.roll(pm, i - length // 2, axis=0)
-    al = out[..., 3:4]
-    rgb = np.where(al > 1e-4, out[..., :3] / np.maximum(al, 1e-4), 0.0)
-    res = np.concatenate([rgb, al], axis=-1)
-    return Image.fromarray((np.clip(res, 0, 1) * 255 + 0.5).astype(np.uint8), "RGBA")
-
-
 def alpha_image(alpha: np.ndarray, rgb=(255, 255, 255)) -> Image.Image:
     h, w = alpha.shape
     arr = np.zeros((h, w, 4), np.uint8)
     arr[..., 0], arr[..., 1], arr[..., 2] = rgb
     arr[..., 3] = (np.clip(alpha, 0, 1) * 255 + 0.5).astype(np.uint8)
     return Image.fromarray(arr, "RGBA")
-
-
-def fx_glow() -> Image.Image:
-    n = 128
-    yy, xx = np.mgrid[0:n, 0:n]
-    d = np.hypot(xx - (n - 1) / 2, yy - (n - 1) / 2) / (n / 2)
-    a = (np.exp(-(d**2) * 5) - math.exp(-5)) / (1 - math.exp(-5))
-    return alpha_image(np.where(d < 1, a, 0))
 
 
 def fx_spark() -> Image.Image:
@@ -435,11 +412,8 @@ def main() -> None:
         img = fn()
         if name == "seven":
             big_seven = img
-        small = downsample(img, OUT)
-        small.save(os.path.join(SYM_DIR, f"{name}.png"))
-        motion_blur(small, BLUR_PX).save(os.path.join(SYM_DIR, f"{name}_blur.png"))
+        downsample(img, OUT).save(os.path.join(SYM_DIR, f"{name}.png"))
         print("symbol", name)
-    fx_glow().save(os.path.join(FX_DIR, "glow.png"))
     fx_spark().save(os.path.join(FX_DIR, "spark.png"))
     fx_star().save(os.path.join(FX_DIR, "star.png"))
     fx_coin().save(os.path.join(FX_DIR, "coin.png"))

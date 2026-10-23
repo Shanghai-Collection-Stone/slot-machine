@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="SlotSymbol" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/slot_symbol.gd" id="1_l0j04"]
+[ext_resource type="Texture2D" path="res://assets/symbols/grape.png" id="2_ok38g"]
+
+[resource]
+script = ExtResource("1_l0j04")
+id = "grape"
+display_name = "葡萄"
+texture = ExtResource("2_ok38g")
+tier = 0
+color = Color(0.8, 0.5, 1, 1)
+count = 4
+size_scale = 1.0

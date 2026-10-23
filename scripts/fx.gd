@@ -1,10 +1,17 @@
 class_name SlotFX
 extends Node2D
 ## 粒子与冲击波：火花、星光、金币、冲击环。坐标与 SlotMachine 本地坐标一致。
+## 粒子贴图在 Inspector 里替换（比如把金币换成你自己的奖品图标）。
 
-const FX_DIR := "res://assets/fx/"
+## 停轮火花（细长条，竖直方向会对齐飞行方向）
+@export var spark_texture: Texture2D
+## 中奖星光
+@export var star_texture: Texture2D
+## 金币（中奖喷泉 / 大奖金币雨）
+@export var coin_texture: Texture2D
+## 金币大小
+@export_range(0.2, 4.0, 0.05) var coin_scale := 1.0
 
-var _tex := {}
 var _add_mat := CanvasItemMaterial.new()
 var _rings: Array = []
 var _showers: Array[CPUParticles2D] = []
@@ -13,9 +20,6 @@ var _showers: Array[CPUParticles2D] = []
 func _ready() -> void:
 	_add_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	material = _add_mat  # 冲击环用叠加混合（子粒子各自设置材质）
-	for n in ["spark", "glow", "star", "coin"]:
-		var path: String = FX_DIR + n + ".png"
-		_tex[n] = load(path) if ResourceLoader.exists(path) else null
 
 
 ## 扩散的冲击环
@@ -26,7 +30,7 @@ func ring(pos: Vector2, color: Color, radius := 220.0, duration := 0.35, width :
 
 ## 定向火花（停轮时从滚轮两侧喷出）
 func sparks(pos: Vector2, dir: Vector2, color: Color, amount := 18, speed := 900.0) -> void:
-	var p := _emitter(amount, 0.35, "spark", true)
+	var p := _emitter(amount, 0.35, spark_texture, true)
 	p.position = pos
 	p.direction = dir
 	p.spread = 38.0
@@ -44,7 +48,7 @@ func sparks(pos: Vector2, dir: Vector2, color: Color, amount := 18, speed := 900
 
 ## 四散的星光
 func burst(pos: Vector2, color: Color, amount := 20, speed := 520.0) -> void:
-	var p := _emitter(amount, 0.7, "star", true)
+	var p := _emitter(amount, 0.7, star_texture, true)
 	p.position = pos
 	p.spread = 180.0
 	p.initial_velocity_min = speed * 0.3
@@ -63,7 +67,7 @@ func burst(pos: Vector2, color: Color, amount := 20, speed := 520.0) -> void:
 
 ## 金币喷泉（从下往上喷）
 func coin_burst(pos: Vector2, amount := 30) -> void:
-	var p := _emitter(amount, 1.6, "coin", false)
+	var p := _emitter(amount, 1.6, coin_texture, false)
 	p.position = pos
 	p.direction = Vector2.UP
 	p.spread = 50.0
@@ -72,14 +76,14 @@ func coin_burst(pos: Vector2, amount := 30) -> void:
 	p.gravity = Vector2(0, 1800)
 	p.angular_velocity_min = -540.0
 	p.angular_velocity_max = 540.0
-	p.scale_amount_min = 0.7
-	p.scale_amount_max = 1.2
+	p.scale_amount_min = 0.7 * _coin_k()
+	p.scale_amount_max = 1.2 * _coin_k()
 	p.emitting = true
 
 
 ## 金币雨，持续 duration 秒
 func coin_shower(area: Rect2, duration: float, rate := 60) -> void:
-	var p := _emitter(int(rate * 2.2), 2.2, "coin", false)
+	var p := _emitter(int(rate * 2.2), 2.2, coin_texture, false)
 	p.one_shot = false
 	p.explosiveness = 0.0
 	p.position = Vector2(area.get_center().x, area.position.y - 60.0)
@@ -92,8 +96,8 @@ func coin_shower(area: Rect2, duration: float, rate := 60) -> void:
 	p.gravity = Vector2(0, 900)
 	p.angular_velocity_min = -540.0
 	p.angular_velocity_max = 540.0
-	p.scale_amount_min = 0.7
-	p.scale_amount_max = 1.3
+	p.scale_amount_min = 0.7 * _coin_k()
+	p.scale_amount_max = 1.3 * _coin_k()
 	p.emitting = true
 	_showers.append(p)
 	get_tree().create_timer(duration).timeout.connect(_end_shower.bind(p))
@@ -113,17 +117,23 @@ func _end_shower(p) -> void:
 	get_tree().create_timer(p.lifetime + 0.1).timeout.connect(p.queue_free)
 
 
-func _emitter(amount: int, lifetime: float, tex_name: String, additive: bool) -> CPUParticles2D:
+func _emitter(amount: int, lifetime: float, texture: Texture2D, additive: bool) -> CPUParticles2D:
 	var p := CPUParticles2D.new()
 	p.amount = amount
 	p.lifetime = lifetime
 	p.one_shot = true
 	p.explosiveness = 1.0
-	p.texture = _tex.get(tex_name)
+	p.texture = texture
 	p.material = _add_mat if additive else null
 	p.finished.connect(p.queue_free)
 	add_child(p)
 	return p
+
+
+## 不管金币图多大，默认都显示成约 64 像素，再乘 coin_scale
+func _coin_k() -> float:
+	var h := coin_texture.get_size().y if coin_texture else 64.0
+	return coin_scale * 64.0 / maxf(h, 1.0)
 
 
 func _ramp(from: Color, to: Color) -> Gradient:

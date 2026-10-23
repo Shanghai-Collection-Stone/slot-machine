@@ -42,7 +42,7 @@ func _draw() -> void:
 	for wi in wins.size():
 		var w: Dictionary = wins[wi]
 		var line: PackedInt32Array = w.line
-		var col := SlotSymbols.color(w.symbol)
+		var col: Color = w.symbol.color
 		if rainbow:
 			col = Color.from_hsv(fmod(_t * 0.7 + wi * 0.17, 1.0), 0.7, 1.0)
 

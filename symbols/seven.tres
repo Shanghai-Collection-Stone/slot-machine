@@ -1,0 +1,14 @@
+[gd_resource type="Resource" script_class="SlotSymbol" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/slot_symbol.gd" id="1_8a5ag"]
+[ext_resource type="Texture2D" path="res://assets/symbols/seven.png" id="2_5ft3d"]
+
+[resource]
+script = ExtResource("1_8a5ag")
+id = "seven"
+display_name = "7"
+texture = ExtResource("2_5ft3d")
+tier = 2
+color = Color(1, 0.3, 0.25, 1)
+count = 2
+size_scale = 1.0

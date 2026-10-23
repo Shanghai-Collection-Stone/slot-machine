@@ -1,10 +1,11 @@
 extends Control
 ## 游戏流程与"打击感"演出。
+## 启动后是待机画面（滚轮自己慢慢滚，每列显示"请开始"），闲置一段时间后也会回到待机。
 ## 空格 / 回车 / 点击：开始（转动中再按 = 从左到右停下一列）
 ## Z X C、1 2 3、← ↓ → 或点击滚轮：停对应的列
-## [ ]：调整滚轮间距    F1：帮助    F11：全屏
+## Esc / F2：设置    F1：帮助    F11：全屏
 
-enum Phase { IDLE, SPINNING, RESULT }
+enum Phase { ATTRACT, IDLE, SPINNING, RESULT }
 
 ## 项目设置 → 输入映射 里已定义的同名动作优先，这里只补缺。
 const KEYS := {
@@ -14,8 +15,7 @@ const KEYS := {
 	"slot_stop_3": [KEY_C, KEY_3, KEY_RIGHT],
 	"slot_stop_4": [KEY_V, KEY_4],
 	"slot_stop_5": [KEY_B, KEY_5],
-	"slot_gap_less": [KEY_BRACKETLEFT, KEY_MINUS],
-	"slot_gap_more": [KEY_BRACKETRIGHT, KEY_EQUAL],
+	"slot_settings": [KEY_ESCAPE, KEY_F2],
 	"slot_help": [KEY_F1, KEY_H],
 	"slot_fullscreen": [KEY_F11],
 }
@@ -24,6 +24,7 @@ const JOY_BUTTONS := {
 	"slot_stop_1": [JOY_BUTTON_X, JOY_BUTTON_DPAD_LEFT],
 	"slot_stop_2": [JOY_BUTTON_Y, JOY_BUTTON_DPAD_DOWN],
 	"slot_stop_3": [JOY_BUTTON_B, JOY_BUTTON_DPAD_RIGHT],
+	"slot_settings": [JOY_BUTTON_BACK],
 }
 
 @export_group("目押补正")
@@ -43,8 +44,10 @@ const JOY_BUTTONS := {
 @export var hitstop := true
 ## 手柄震动
 @export var gamepad_rumble := true
-## [ ] 每次调整的间距（像素）
-@export var gap_step := 10.0
+
+@export_group("待机")
+## 一局结束后闲置多少秒回到待机画面（0 = 不回）
+@export_range(0.0, 600.0, 1.0, "suffix:s") var attract_delay := 15.0
 
 @onready var machine: SlotMachine = $ShakeRoot/SlotMachine
 @onready var shaker: ScreenShaker = $ShakeRoot
@@ -56,6 +59,11 @@ const JOY_BUTTONS := {
 @onready var help: Label = $Help
 
 var phase := Phase.IDLE
+var settings_panel: SettingsPanel
+var _settings: GameSettings
+var _defaults: GameSettings
+var _idle_t := 0.0
+var _applied_sfx := -1.0
 var _stops := 0
 var _spin_id := 0
 var _reached := false
@@ -75,6 +83,35 @@ func _ready() -> void:
 	machine.reel_impact.connect(_on_reel_impact)
 	machine.reel_clicked.connect(_on_reel_clicked)
 
+	# 设置：场景里 Inspector 上的值是默认值，保存过的设置覆盖它
+	_defaults = GameSettings.new()
+	_defaults.reel_gap = machine.reel_gap
+	_defaults.spin_speed = machine.spin_speed
+	_settings = GameSettings.load_or(_defaults)
+	_apply_settings(_settings)
+	settings_panel = SettingsPanel.new()
+	settings_panel.name = "SettingsPanel"
+	add_child(settings_panel)
+	settings_panel.preview.connect(_apply_settings)
+	settings_panel.saved.connect(_on_settings_saved)
+	settings_panel.cancelled.connect(_apply_settings)
+
+	sfx.play_bgm()
+	_enter_attract(true)
+	get_tree().auto_accept_quit = false  # 关窗口时先收掉声音再退出，见 quit()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		quit()
+
+
+## 先停掉所有声音，等音频线程释放播放中的 BGM，再退出（直接退出会在输出里报资源泄漏）
+func quit() -> void:
+	sfx.stop_all()
+	await get_tree().create_timer(0.3, true, false, true).timeout
+	get_tree().quit()
+
 
 func _setup_input() -> void:
 	for action in KEYS:
@@ -91,13 +128,28 @@ func _setup_input() -> void:
 			InputMap.action_add_event(action, j)
 
 
+## 任何操作都重置闲置计时
+func _input(event: InputEvent) -> void:
+	if event.is_pressed():
+		_idle_t = 0.0
+
+
+func _process(delta: float) -> void:
+	if attract_delay <= 0.0 or settings_panel.is_open():
+		return
+	if phase == Phase.IDLE or phase == Phase.RESULT:
+		_idle_t += delta
+		if _idle_t >= attract_delay:
+			_enter_attract()
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	if settings_panel.is_open():
+		return
 	if event.is_action_pressed("slot_start"):
 		_on_lever()
-	elif event.is_action_pressed("slot_gap_less"):
-		_change_gap(-gap_step)
-	elif event.is_action_pressed("slot_gap_more"):
-		_change_gap(gap_step)
+	elif event.is_action_pressed("slot_settings"):
+		_open_settings()
 	elif event.is_action_pressed("slot_help"):
 		help.visible = not help.visible
 	elif event.is_action_pressed("slot_fullscreen"):
@@ -133,17 +185,33 @@ func _on_reel_clicked(reel: Reel) -> void:
 		_start_spin()
 
 
-func _start_spin() -> void:
+## 待机：滚轮自己慢慢滚，每列显示"请开始"
+func _enter_attract(instant := false) -> void:
+	phase = Phase.ATTRACT
+	_reset_presentation()
+	sfx.stop_loop()
+	machine.start_attract()
+	machine.show_prompt(true, instant)
+
+
+## 收掉上一局的所有演出（中奖高亮、金币雨、背景闪烁、顿帧）
+func _reset_presentation() -> void:
 	_spin_id += 1
-	phase = Phase.SPINNING
-	_stops = 0
-	_reached = false
+	_idle_t = 0.0
 	Engine.time_scale = 1.0
 	machine.clear_wins()
 	fx.stop_showers()
 	if _bg_tween:
 		_bg_tween.kill()
 	background.color = _bg_color
+
+
+func _start_spin() -> void:
+	_reset_presentation()
+	phase = Phase.SPINNING
+	_stops = 0
+	_reached = false
+	machine.show_prompt(false)
 
 	sfx.play("lever")
 	sfx.start_loop(machine.spin_speed / Sfx.LOOP_TICK_RATE)
@@ -185,12 +253,12 @@ func _match_lines(unknown_needed: int, hypo: Reel = null, hypo_offset := 0.0, la
 	if machine.reels.size() < 2:
 		return result
 	for line in machine.get_lines():
-		var sym := ""
+		var sym: SlotSymbol = null
 		var ok := true
 		var unknown := 0
 		for i in machine.reels.size():
 			var r := machine.reels[i]
-			var s := ""
+			var s: SlotSymbol
 			if r == hypo:
 				s = r.symbol_at(line[i], hypo_offset)
 			elif r.is_spinning() or (landed_only and not r.has_landed()):
@@ -198,12 +266,11 @@ func _match_lines(unknown_needed: int, hypo: Reel = null, hypo_offset := 0.0, la
 				continue
 			else:
 				s = r.result_symbol(line[i])
-			if sym.is_empty():
-				sym = s
-			elif s != sym:
+			if s == null or not s.pays() or (sym != null and s != sym):
 				ok = false
 				break
-		if ok and unknown == unknown_needed and not sym.is_empty():
+			sym = s
+		if ok and unknown == unknown_needed and sym != null:
 			result.append({"line": line, "symbol": sym})
 	return result
 
@@ -222,6 +289,7 @@ func _on_reel_impact(reel: Reel) -> void:
 	var heavy := 1.6 if last else 1.0
 
 	sfx.play("stop", 1.0 - 0.035 * (_stops - 1) + randf_range(-0.015, 0.015))
+	sfx.duck_bgm(10.0 if last else 6.0, 0.06, 0.4)  # 重击瞬间压一下 BGM，打击更突出
 	if last:
 		sfx.play("boom", 1.0, -5.0)
 		sfx.stop_loop()
@@ -257,14 +325,14 @@ func _check_reach() -> void:
 	if lines.is_empty():
 		return
 	_reached = true
-	var big := false
-	for l in lines:
-		big = big or SlotSymbols.tier(l.symbol) == SlotSymbols.Tier.JACKPOT
+	var top := _top_symbol(lines)
+	var big := top.tier == SlotSymbol.Tier.JACKPOT
 	machine.show_reach(lines)
+	sfx.duck_bgm(6.0, 1.0, 0.6)
 	sfx.play("reach", 1.06 if big else 1.0)
 	sfx.set_loop(0.0, machine.spin_speed / Sfx.LOOP_TICK_RATE * 1.08)  # 紧张感：转动声变大变尖
 	shaker.add_trauma(0.25 if big else 0.15)
-	_flash(SlotSymbols.color(lines[0].symbol), 0.45 if big else 0.22, 0.4)
+	_flash(top.color, 0.45 if big else 0.22, 0.4)
 	_rumble(0.3, 0.2, 0.2)
 
 
@@ -277,15 +345,22 @@ func _on_all_stopped() -> void:
 			sfx.play("miss")
 		return
 	phase = Phase.RESULT
-	var tier: int = SlotSymbols.Tier.NORMAL
-	for w in wins:
-		tier = maxi(tier, SlotSymbols.tier(w.symbol))
+	var top := _top_symbol(wins)
 	var id := _spin_id
 	if hitstop:
-		await _hitstop(0.05 + 0.04 * tier)
+		await _hitstop(0.05 + 0.04 * top.tier)
 		if id != _spin_id:
 			return
-	_celebrate(wins, tier)
+	_celebrate(wins, top)
+
+
+## 多条线同时成立时，取中奖等级最高的符号来决定演出
+func _top_symbol(lines: Array) -> SlotSymbol:
+	var top: SlotSymbol = lines[0].symbol
+	for l in lines:
+		if l.symbol.tier > top.tier:
+			top = l.symbol
+	return top
 
 
 func _hitstop(duration: float) -> void:
@@ -294,27 +369,33 @@ func _hitstop(duration: float) -> void:
 	Engine.time_scale = 1.0
 
 
-func _celebrate(wins: Array, tier: int) -> void:
-	machine.show_wins(wins, tier == SlotSymbols.Tier.JACKPOT)
-	var main_col := SlotSymbols.color(wins[0].symbol)
+func _celebrate(wins: Array, top: SlotSymbol) -> void:
+	var tier := top.tier
+	machine.show_wins(wins, tier == SlotSymbol.Tier.JACKPOT)
+	var main_col := top.color
+	if top.win_sound:
+		sfx.play_stream(top.win_sound)
 	for w in wins:
-		var col := SlotSymbols.color(w.symbol)
+		var col: Color = w.symbol.color
 		for i in machine.reels.size():
 			var c := machine.cell_rect(i, w.line[i]).get_center()
 			fx.burst(c, col, 14 + 10 * tier)
 			fx.ring(c, col, 150.0 + 40.0 * tier, 0.45, 10.0)
 
 	var area := Rect2(Vector2.ZERO, machine.size)
+	sfx.duck_bgm(9.0 + 3.5 * tier, 1.2 + 1.3 * tier, 1.2)  # 中奖音乐期间 BGM 让位
 	match tier:
-		SlotSymbols.Tier.NORMAL:
-			sfx.play("win")
+		SlotSymbol.Tier.NORMAL:
+			if not top.win_sound:
+				sfx.play("win")
 			shaker.add_trauma(0.3)
 			shaker.zoom_punch(0.25)
 			_flash(main_col, 0.25, 0.3)
 			_coins(6, 0.6)
 			_rumble(0.3, 0.3, 0.2)
-		SlotSymbols.Tier.BIG:
-			sfx.play("win_big")
+		SlotSymbol.Tier.BIG:
+			if not top.win_sound:
+				sfx.play("win_big")
 			sfx.play("boom", 0.9, -4.0)
 			shaker.add_trauma(0.6)
 			shaker.zoom_punch(0.5)
@@ -323,7 +404,8 @@ func _celebrate(wins: Array, tier: int) -> void:
 			_coins(16, 1.2)
 			_rumble(0.6, 0.8, 0.35)
 		_:
-			sfx.play("jackpot")
+			if not top.win_sound:
+				sfx.play("jackpot")
 			sfx.play("boom", 0.8)
 			shaker.add_trauma(1.0)
 			shaker.zoom_punch(0.9)
@@ -377,12 +459,29 @@ func _rumble(weak: float, strong: float, duration: float) -> void:
 		Input.start_joy_vibration(device, clampf(weak, 0.0, 1.0), clampf(strong, 0.0, 1.0), duration)
 
 
-# ---------------------------------------------------------------- 调间距 / 提示
+# ---------------------------------------------------------------- 设置 / 提示
 
-func _change_gap(delta: float) -> void:
-	machine.reel_gap = maxf(0.0, machine.reel_gap + delta)
-	sfx.play("press", 1.3, -4.0)
-	_show_toast("间距  %d px" % roundi(machine.reel_gap))
+func _open_settings() -> void:
+	if phase == Phase.SPINNING:
+		_show_toast("转动中不能打开设置")
+		return
+	settings_panel.open(_settings, _defaults)
+
+
+func _apply_settings(s: GameSettings) -> void:
+	machine.reel_gap = s.reel_gap
+	machine.spin_speed = s.spin_speed
+	sfx.set_bgm_volume(s.bgm_volume)
+	sfx.set_sfx_volume(s.sfx_volume)
+	if is_node_ready() and settings_panel and settings_panel.is_open() and not is_equal_approx(s.sfx_volume, _applied_sfx):
+		sfx.play("coin")  # 调音效音量时用新音量试听
+	_applied_sfx = s.sfx_volume
+
+
+func _on_settings_saved(s: GameSettings) -> void:
+	_settings = s.copy()
+	_apply_settings(_settings)
+	_show_toast("设置已保存")
 
 
 func _show_toast(text: String) -> void:
